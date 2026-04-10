@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: dokument-service
+  jpa:
+    open-in-view: false
+
+  management:
+    endpoint:
+      health:
+        probes:
+          enabled: true
+    endpoints:
+      web:
+        exposure:
+          include: health
+
+---
+# DEV profile – H2 in-memory, H2 console enabled
+# Run with: --spring.profiles.active=dev
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: jdbc:h2:mem:sdsdev;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    defer-datasource-initialization: true
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+app:
+  dev:
+    jwt-secret: "sds-dev-only-secret-do-not-use-in-prod!!"
+
+---
+# PROD profile – MySQL, secrets via env vars
+# Run with: --spring.profiles.active=prod
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI}

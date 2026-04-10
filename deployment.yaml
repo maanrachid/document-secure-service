@@ -1,0 +1,154 @@
+# ─────────────────────────────────────────────────────────────
+# Secure Document Service – OpenShift deployment
+#
+# Secrets referenced here must be created before applying:
+#
+#   oc create secret generic sds-db-secret \
+#     --from-literal=url='jdbc:mysql://db:3306/sds' \
+#     --from-literal=username='sds' \
+#     --from-literal=password='<password>'
+#
+#   oc create secret generic sds-oidc-secret \
+#     --from-literal=issuer-uri='https://keycloak.example.com/realms/sds'
+#
+#   oc create secret generic sds-storage-secret \
+#     --from-literal=storage-dir='/var/sds/uploads'
+# ─────────────────────────────────────────────────────────────
+
+# ── Deployment ────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: document-service
+  labels:
+    app: document-service
+spec:
+  replicas: 2                     # Horizontal scaling – app is stateless
+  selector:
+    matchLabels:
+      app: document-service
+  template:
+    metadata:
+      labels:
+        app: document-service
+    spec:
+      # ── Security context (pod level) ──────────────────────────
+      securityContext:
+        runAsNonRoot: true        # OpenShift restricted SCC requires this
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: document-service
+          image: your-registry/document-service:latest  # replace with actual image ref
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+
+          # ── Security context (container level) ───────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+
+          # ── Secrets injected as env vars – never in image ─────
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sds-db-secret
+                  key: url
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: sds-db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sds-db-secret
+                  key: password
+            - name: OIDC_ISSUER_URI
+              valueFrom:
+                secretKeyRef:
+                  name: sds-oidc-secret
+                  key: issuer-uri
+            - name: STORAGE_DIR
+              valueFrom:
+                secretKeyRef:
+                  name: sds-storage-secret
+                  key: storage-dir
+
+          # ── Resource limits ───────────────────────────────────
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+
+          # ── Probes ────────────────────────────────────────────
+          # Liveness: restart the pod if the app is deadlocked
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+
+          # Readiness: stop sending traffic if the app is not ready
+          # (e.g. still connecting to DB, warming up caches)
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # ── Volume mounts ─────────────────────────────────────
+          volumeMounts:
+            - name: uploads
+              mountPath: /var/sds/uploads
+            - name: tmp
+              mountPath: /tmp              # needed because readOnlyRootFilesystem=true
+
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: sds-uploads-pvc
+        - name: tmp
+          emptyDir: {}
+
+---
+# ── Service ───────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: document-service
+spec:
+  selector:
+    app: document-service
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+
+---
+# ── PersistentVolumeClaim for uploaded files ──────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sds-uploads-pvc
+spec:
+  accessModes:
+    - ReadWriteMany          # RWX needed when replicas > 1 share the same volume
+  resources:
+    requests:
+      storage: 10Gi

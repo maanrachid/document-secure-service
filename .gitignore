@@ -1,0 +1,28 @@
+# Build output
+**/target/
+**/out/
+**/bin/
+
+# Runtime logs
+**/logs/
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Java crash files
+hs_err_pid*
+replay_pid*
+
+# Local environment overrides
+.env
+.env.*
